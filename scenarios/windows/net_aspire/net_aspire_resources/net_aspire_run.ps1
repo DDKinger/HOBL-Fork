@@ -7,7 +7,8 @@ param(
     [switch]$binlog,
     [switch]$skipPlaywrightBrowserInstall,
     [ValidateRange(0, 2147483647)]
-    [int]$maxCpuCount = 0
+    [int]$maxCpuCount = 0,
+    [switch]$directSchemaExec
 )
 
 # Require PowerShell > 7
@@ -152,6 +153,14 @@ if (-not $dotnetCmd) {
 "-- All installed SDKs:" | log
 dotnet --list-sdks 2>&1 | ForEach-Object { "   $_" | log }
 
+if ($directSchemaExec) {
+    $schemaTargets = Join-Path $PSScriptRoot "DirectSchemaExec.targets"
+    if (-not (Test-Path -LiteralPath $schemaTargets -PathType Leaf)) {
+        " ERROR - Direct SchemaGenerator targets not found: $schemaTargets" | log
+        Exit 1
+    }
+}
+
 # Increase Playwright browser download timeout (default is too short for slow CDN)
 $env:PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT = "300000"
 "-- Set PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=300000 (5 minutes)" | log
@@ -181,6 +190,9 @@ if ($skipPlaywrightBrowserInstall) {
 }
 if ($maxCpuCount -gt 0) {
     $buildArgs += "-m:$maxCpuCount"
+}
+if ($directSchemaExec) {
+    $buildArgs += "-p:CustomAfterDirectoryBuildTargets=$schemaTargets"
 }
 if ($binlog) {
     $binlogFile = Join-Path "$scriptDrive\hobl_data" "net_aspire_build_$(Get-Date -Format 'yyyyMMdd_HHmmss_fffffff').binlog"

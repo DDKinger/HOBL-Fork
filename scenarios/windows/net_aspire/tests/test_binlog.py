@@ -130,6 +130,20 @@ class WindowsBuildExperimentConfigurationTests(ScenarioConfigurationTestCase):
                 self.scenario._call.assert_not_called()
 
 
+class DirectSchemaConfigurationTests(ScenarioConfigurationTestCase):
+    def test_enabled_on_prepared_dut_uploads_script_and_targets_and_forwards_opt_in(self):
+        self.values['direct_schema_exec'] = '1'
+        self.scenario.setUp()
+        resources = r'scenarios\windows\net_aspire\net_aspire_resources'
+        uploaded = {call.args[0] for call in self.scenario._upload.call_args_list}
+        self.assertEqual(uploaded, {resources + r'\net_aspire_run.ps1', resources + r'\DirectSchemaExec.targets'})
+        self.scenario.createPrepStatusControlFile.assert_not_called()
+        self.scenario.runTest()
+        self.assertEqual(self.scenario._call.call_count, 2)
+        for call in self.scenario._call.call_args_list:
+            self.assertTrue(call.args[0][1].endswith(' -directSchemaExec'))
+
+
 class MacBuildExperimentConfigurationTests(WindowsBuildExperimentConfigurationTests):
     scenario_dir = MAC_SCENARIO_DIR
     scenario_class = 'MacNetAspire'
@@ -153,7 +167,7 @@ class BinlogScriptTests(unittest.TestCase):
         self.wrapper = self.root / 'invoke-test.ps1'
         self.wrapper.write_text(r'''
 param([string]$RunScript, [string]$TestRoot, [switch]$Binlog, [int]$BuildExitCode,
-      [switch]$SkipPlaywrightBrowserInstall, [int]$MaxCpuCount = 0)
+      [switch]$SkipPlaywrightBrowserInstall, [int]$MaxCpuCount = 0, [switch]$DirectSchemaExec)
 $ErrorActionPreference = 'Stop'
 function Split-Path {
     param([string]$Path, [switch]$Qualifier, [switch]$Parent)
@@ -173,11 +187,11 @@ function dotnet {
         $global:LASTEXITCODE = $BuildExitCode
     }
 }
-& $RunScript -binlog:$Binlog -skipPlaywrightBrowserInstall:$SkipPlaywrightBrowserInstall -maxCpuCount $MaxCpuCount
+& $RunScript -binlog:$Binlog -skipPlaywrightBrowserInstall:$SkipPlaywrightBrowserInstall -maxCpuCount $MaxCpuCount -directSchemaExec:$DirectSchemaExec
 exit $LASTEXITCODE
 ''', encoding='utf-8')
 
-    def run_script(self, enabled=False, build_exit_code=0, skip_playwright=False, max_cpu_count=0):
+    def run_script(self, enabled=False, build_exit_code=0, skip_playwright=False, max_cpu_count=0, direct_schema=False):
         command = [shutil.which('pwsh'), '-NoProfile', '-NonInteractive', '-File', str(self.wrapper),
                    '-RunScript', str(SCENARIO_DIR / 'net_aspire_resources' / 'net_aspire_run.ps1'),
                    '-TestRoot', str(self.root), '-BuildExitCode', str(build_exit_code)]
@@ -187,6 +201,8 @@ exit $LASTEXITCODE
             command.append('-SkipPlaywrightBrowserInstall')
         if max_cpu_count:
             command.extend(['-MaxCpuCount', str(max_cpu_count)])
+        if direct_schema:
+            command.append('-DirectSchemaExec')
         return subprocess.run(command, capture_output=True, text=True, timeout=60)
 
     def dotnet_calls(self):
@@ -198,6 +214,17 @@ exit $LASTEXITCODE
         build = next(call for call in self.dotnet_calls() if call[0] == 'build')
         self.assertEqual(build, ['build', 'Aspire.slnx', '--no-restore'])
         self.assertEqual(list((self.root / 'hobl_data').glob('*.binlog')), [])
+
+    def test_direct_schema_targets_passed_only_to_timed_build(self):
+        result = self.run_script(direct_schema=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        target = SCENARIO_DIR / 'net_aspire_resources' / 'DirectSchemaExec.targets'
+        commands = [call for call in self.dotnet_calls() if call[0] in ('clean', 'restore', 'build')]
+        self.assertEqual(commands, [
+            ['clean', 'Aspire.slnx'],
+            ['restore', 'Aspire.slnx'],
+            ['build', 'Aspire.slnx', '--no-restore', f'-p:CustomAfterDirectoryBuildTargets={target}'],
+        ])
 
     def test_enabled_builds_keep_separate_logs_in_results_directory(self):
         for _ in range(2):
