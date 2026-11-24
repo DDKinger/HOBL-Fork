@@ -9,7 +9,9 @@ param(
     [ValidateRange(0, 2147483647)]
     [int]$maxCpuCount = 0,
     [switch]$directSchemaExec,
-    [switch]$schemaTiming
+    [switch]$schemaTiming,
+    [ValidateSet("default", "11")]
+    [string]$schemaRuntime = "default"
 )
 
 # Require PowerShell > 7
@@ -160,18 +162,22 @@ if ($directSchemaExec) {
         " ERROR - Direct SchemaGenerator targets not found: $schemaTargets" | log
         Exit 1
     }
-    if ($schemaTiming) {
-        if (-not $directSchemaExec -or $binlog) {
-            " ERROR - Schema timing requires -directSchemaExec and no -binlog." | log
-            Exit 1
-        }
-        $schemaTimingScript = Join-Path $PSScriptRoot "SchemaTiming.ps1"
-        if (-not (Test-Path -LiteralPath $schemaTimingScript -PathType Leaf)) {
-            " ERROR - Schema timing script not found: $schemaTimingScript" | log
-            Exit 1
-        }
-        . $schemaTimingScript
+}
+if ($schemaRuntime -ne "default" -and -not $schemaTiming) {
+    " ERROR - Schema runtime override requires -schemaTiming." | log
+    Exit 1
+}
+if ($schemaTiming) {
+    if (-not $directSchemaExec -or $binlog) {
+        " ERROR - Schema timing requires -directSchemaExec and no -binlog." | log
+        Exit 1
     }
+    $schemaTimingScript = Join-Path $PSScriptRoot "SchemaTiming.ps1"
+    if (-not (Test-Path -LiteralPath $schemaTimingScript -PathType Leaf)) {
+        " ERROR - Schema timing script not found: $schemaTimingScript" | log
+        Exit 1
+    }
+    . $schemaTimingScript
 }
 
 # Increase Playwright browser download timeout (default is too short for slow CDN)
@@ -214,8 +220,14 @@ if ($binlog) {
 }
 
 $timingDirectory = $null
+$schemaRuntimeVersion = ""
 try {
     if ($schemaTiming) {
+        if ($schemaRuntime -eq "11") {
+            $schemaRuntimeVersion = Get-SchemaRuntimeVersion -DotNetPath $dotnetCmd.Source -Major 11
+            "-- SchemaGenerator runtime override: $schemaRuntimeVersion" | log
+            $buildArgs += "-p:HoblSchemaRuntimeVersion=$schemaRuntimeVersion"
+        }
         $timingStamp = Get-Date -Format 'yyyyMMdd_HHmmss_fffffff'
         $timingFile = Join-Path "$scriptDrive\hobl_data" "net_aspire_schema_timing_$timingStamp.csv"
         $timingDirectory = (New-Item -ItemType Directory -Path "$scriptDrive\hobl_bin\net_aspire_schema_timing_$timingStamp" -ErrorAction Stop).FullName
@@ -239,7 +251,7 @@ try {
     Write-RunPhaseMarker "phase.run_results.start"
 
     if ($schemaTiming) {
-        Export-SchemaTimingSamples -TimingDirectory $timingDirectory -OutputPath $timingFile
+        Export-SchemaTimingSamples -TimingDirectory $timingDirectory -OutputPath $timingFile -ExpectedRuntimeVersion $schemaRuntimeVersion
         "SchemaGenerator timing CSV saved to: $timingFile" | log
     }
 } catch {

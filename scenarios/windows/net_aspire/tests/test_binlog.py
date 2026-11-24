@@ -163,6 +163,21 @@ class DirectSchemaConfigurationTests(ScenarioConfigurationTestCase):
                 self.scenario._upload.assert_not_called()
                 self.scenario._call.assert_not_called()
 
+    def test_selecting_dotnet_11_passes_runtime_to_timed_generator(self):
+        self.values.update(direct_schema_exec='1', schema_timing='1', schema_runtime='11')
+        self.scenario.setUp()
+        self.scenario.runTest()
+        for call in self.scenario._call.call_args_list:
+            self.assertTrue(call.args[0][1].endswith(' -directSchemaExec -schemaTiming -schemaRuntime 11'))
+
+    def test_runtime_requires_diagnostics_and_a_supported_value(self):
+        for value in ('11', 'latest'):
+            with self.subTest(value=value):
+                self.values.update(direct_schema_exec='1', schema_runtime=value)
+                with self.assertRaisesRegex(ValueError, 'schema_runtime'):
+                    self.scenario.setUp()
+                self.scenario._upload.assert_not_called()
+
 
 class MacBuildExperimentConfigurationTests(WindowsBuildExperimentConfigurationTests):
     scenario_dir = MAC_SCENARIO_DIR

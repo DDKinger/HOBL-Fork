@@ -19,6 +19,7 @@ public sealed class HoblDirectSchemaExec : ToolTask
     [Required] public string ResponseFile { get; set; }
     [Required] public string WorkingDirectory { get; set; }
     public string TimingDirectory { get; set; }
+    public string RuntimeVersion { get; set; }
 
     protected override string ToolName => Path.GetFileName(DotNetPath);
     protected override string GenerateFullPathToTool() => DotNetPath;
@@ -40,6 +41,11 @@ public sealed class HoblDirectSchemaExec : ToolTask
     {
         var commandLine = new CommandLineBuilder();
         commandLine.AppendSwitch("exec");
+        if (!string.IsNullOrEmpty(RuntimeVersion))
+        {
+            commandLine.AppendSwitch("--fx-version");
+            commandLine.AppendFileNameIfNotNull(RuntimeVersion);
+        }
         commandLine.AppendFileNameIfNotNull(GeneratorPath);
         commandLine.AppendSwitchIfNotNull("@", ResponseFile);
         return commandLine.ToString();
@@ -67,7 +73,8 @@ public sealed class HoblDirectSchemaExec : ToolTask
                           GeneratorPath="$(ConfigurationSchemaGeneratorPath)"
                           ResponseFile="$(ConfigurationSchemaGeneratorRspPath)"
                           WorkingDirectory="$(MSBuildProjectDirectory)"
-                          TimingDirectory="$(HoblSchemaTimingDirectory)" />
+                          TimingDirectory="$(HoblSchemaTimingDirectory)"
+                          RuntimeVersion="$(HoblSchemaRuntimeVersion)" />
     <ItemGroup>
       <FileWrites Include="$(GeneratedConfigurationSchemaOutputPath)" Condition="Exists('$(GeneratedConfigurationSchemaOutputPath)')" />
     </ItemGroup>

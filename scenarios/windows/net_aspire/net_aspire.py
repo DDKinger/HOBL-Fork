@@ -25,6 +25,7 @@ class NetAspire(core.app_scenario.Scenario):
     Params.setDefault(module, 'max_cpu_count', '0', desc="Maximum concurrent MSBuild processes (0 keeps the original default; experiment B: 12).")
     Params.setDefault(module, 'direct_schema_exec', '0', desc="Launch the Aspire SchemaGenerator directly without a command shell.", valOptions=['0', '1'])
     Params.setDefault(module, 'schema_timing', '0', desc="Collect SchemaGenerator phase timings (requires direct_schema_exec=1 and binlog=0).", valOptions=['0', '1'])
+    Params.setDefault(module, 'schema_runtime', 'default', desc="SchemaGenerator runtime for diagnostics; 11 selects an installed .NET 11 runtime.", valOptions=['default', '11'])
 
 
     def setUp(self):
@@ -35,6 +36,11 @@ class NetAspire(core.app_scenario.Scenario):
         self.skip_playwright_browser_install = Params.get(self.module, 'skip_playwright_browser_install') == '1'
         self.direct_schema_exec = Params.get(self.module, 'direct_schema_exec') == '1'
         self.schema_timing = Params.get(self.module, 'schema_timing') == '1'
+        self.schema_runtime = Params.get(self.module, 'schema_runtime')
+        if self.schema_runtime not in ('default', '11'):
+            raise ValueError("schema_runtime must be default or 11.")
+        if self.schema_runtime != 'default' and not self.schema_timing:
+            raise ValueError("schema_runtime=11 requires schema_timing=1.")
         if self.schema_timing and (not self.direct_schema_exec or self.binlog):
             raise ValueError("schema_timing requires direct_schema_exec=1 and binlog=0.")
         try:
@@ -85,6 +91,8 @@ class NetAspire(core.app_scenario.Scenario):
             run_args += " -directSchemaExec"
         if self.schema_timing:
             run_args += " -schemaTiming"
+        if self.schema_runtime == '11':
+            run_args += " -schemaRuntime 11"
         for i in range(int(self.loops)):
             logging.info(f"Running loop {i + 1}")
             self._call(["pwsh", f"{self.target}\\{self.module}_run.ps1 -startTime {start_time}{run_args}"])
