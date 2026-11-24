@@ -7,6 +7,8 @@
     <Task>
       <Code Type="Class" Language="cs"><![CDATA[
 using System.IO;
+using System.Diagnostics;
+using System.Globalization;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Utilities;
 
@@ -16,10 +18,23 @@ public sealed class HoblDirectSchemaExec : ToolTask
     [Required] public string GeneratorPath { get; set; }
     [Required] public string ResponseFile { get; set; }
     [Required] public string WorkingDirectory { get; set; }
+    public string TimingDirectory { get; set; }
 
     protected override string ToolName => Path.GetFileName(DotNetPath);
     protected override string GenerateFullPathToTool() => DotNetPath;
     protected override string GetWorkingDirectory() => WorkingDirectory;
+
+    protected override Process StartToolProcess(Process process)
+    {
+        if (!string.IsNullOrEmpty(TimingDirectory))
+        {
+            process.StartInfo.EnvironmentVariables["HOBL_SCHEMA_TIMING_DIR"] = TimingDirectory;
+            process.StartInfo.EnvironmentVariables["HOBL_SCHEMA_TIMING_RSP"] = Path.GetFullPath(Path.Combine(WorkingDirectory, ResponseFile));
+            process.StartInfo.EnvironmentVariables["HOBL_SCHEMA_LAUNCH_TICKS"] =
+                Stopwatch.GetTimestamp().ToString(CultureInfo.InvariantCulture);
+        }
+        return base.StartToolProcess(process);
+    }
 
     protected override string GenerateCommandLineCommands()
     {
@@ -34,6 +49,14 @@ public sealed class HoblDirectSchemaExec : ToolTask
     </Task>
   </UsingTask>
 
+  <Target Name="HoblUseInstrumentedSchemaSources" BeforeTargets="CoreCompile"
+          Condition="'$(HoblSchemaTimingDirectory)' != '' and '$(MSBuildProjectName)' == 'ConfigurationSchemaGenerator'">
+    <ItemGroup>
+      <Compile Remove="Program.cs;ConfigSchemaGenerator.cs" />
+      <Compile Include="$(HoblSchemaTimingDirectory)\Program.cs;$(HoblSchemaTimingDirectory)\ConfigSchemaGenerator.cs" />
+    </ItemGroup>
+  </Target>
+
   <!-- Override only the execution target from Aspire v9.4.2; its callers still copy and compare the schema. -->
   <Target Name="CoreGenerateConfigurationSchema"
           Condition="'$(ConfigurationSchemaGeneratorProjectPath)' != ''"
@@ -43,7 +66,8 @@ public sealed class HoblDirectSchemaExec : ToolTask
     <HoblDirectSchemaExec DotNetPath="$(DotNetTool)"
                           GeneratorPath="$(ConfigurationSchemaGeneratorPath)"
                           ResponseFile="$(ConfigurationSchemaGeneratorRspPath)"
-                          WorkingDirectory="$(MSBuildProjectDirectory)" />
+                          WorkingDirectory="$(MSBuildProjectDirectory)"
+                          TimingDirectory="$(HoblSchemaTimingDirectory)" />
     <ItemGroup>
       <FileWrites Include="$(GeneratedConfigurationSchemaOutputPath)" Condition="Exists('$(GeneratedConfigurationSchemaOutputPath)')" />
     </ItemGroup>

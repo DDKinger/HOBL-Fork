@@ -143,6 +143,26 @@ class DirectSchemaConfigurationTests(ScenarioConfigurationTestCase):
         for call in self.scenario._call.call_args_list:
             self.assertTrue(call.args[0][1].endswith(' -directSchemaExec'))
 
+    def test_timing_uploads_helper_and_forwards_opt_in_without_prep(self):
+        self.values.update(direct_schema_exec='1', schema_timing='1')
+        self.scenario.setUp()
+        self.scenario._upload.assert_any_call(
+            r'scenarios\windows\net_aspire\net_aspire_resources\SchemaTiming.ps1',
+            self.scenario.target, check_modified=False)
+        self.scenario.createPrepStatusControlFile.assert_not_called()
+        self.scenario.runTest()
+        for call in self.scenario._call.call_args_list:
+            self.assertTrue(call.args[0][1].endswith(' -directSchemaExec -schemaTiming'))
+
+    def test_timing_rejects_shell_and_binlog_modes_before_dut_changes(self):
+        for direct, binlog in (('0', '0'), ('1', '1')):
+            with self.subTest(direct=direct, binlog=binlog):
+                self.values.update(direct_schema_exec=direct, binlog=binlog, schema_timing='1')
+                with self.assertRaisesRegex(ValueError, 'schema_timing requires'):
+                    self.scenario.setUp()
+                self.scenario._upload.assert_not_called()
+                self.scenario._call.assert_not_called()
+
 
 class MacBuildExperimentConfigurationTests(WindowsBuildExperimentConfigurationTests):
     scenario_dir = MAC_SCENARIO_DIR
