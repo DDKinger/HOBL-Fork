@@ -1,0 +1,51 @@
+<!-- Copyright (c) Microsoft. All rights reserved.
+     Licensed under the MIT license. See LICENSE file in the project root for full license information. -->
+<Project>
+  <UsingTask TaskName="HoblDirectSchemaExec" TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll"
+             Condition="'$(ConfigurationSchemaGeneratorProjectPath)' != ''">
+    <Task>
+      <Code Type="Class" Language="cs"><![CDATA[
+using System.IO;
+using Microsoft.Build.Framework;
+using Microsoft.Build.Utilities;
+
+public sealed class HoblDirectSchemaExec : ToolTask
+{
+    [Required] public string DotNetPath { get; set; }
+    [Required] public string GeneratorPath { get; set; }
+    [Required] public string ResponseFile { get; set; }
+    [Required] public string WorkingDirectory { get; set; }
+
+    protected override string ToolName => Path.GetFileName(DotNetPath);
+    protected override string GenerateFullPathToTool() => DotNetPath;
+    protected override string GetWorkingDirectory() => WorkingDirectory;
+
+    protected override string GenerateCommandLineCommands()
+    {
+        var commandLine = new CommandLineBuilder();
+        commandLine.AppendSwitch("exec");
+        commandLine.AppendFileNameIfNotNull(GeneratorPath);
+        commandLine.AppendSwitchIfNotNull("@", ResponseFile);
+        return commandLine.ToString();
+    }
+}
+      ]]></Code>
+    </Task>
+  </UsingTask>
+
+  <!-- Override only the execution target from Aspire v9.4.2; its callers still copy and compare the schema. -->
+  <Target Name="CoreGenerateConfigurationSchema"
+          Condition="'$(ConfigurationSchemaGeneratorProjectPath)' != ''"
+          DependsOnTargets="WriteConfigurationSchemaGeneratorRspFile;CalculateConfigurationSchemaGeneratorPath"
+          Inputs="$(ConfigurationSchemaGeneratorPath);@(IntermediateAssembly);@(ReferencePathWithRefAssemblies)"
+          Outputs="$(GeneratedConfigurationSchemaOutputPath)">
+    <HoblDirectSchemaExec DotNetPath="$(DotNetTool)"
+                          GeneratorPath="$(ConfigurationSchemaGeneratorPath)"
+                          ResponseFile="$(ConfigurationSchemaGeneratorRspPath)"
+                          WorkingDirectory="$(MSBuildProjectDirectory)" />
+    <ItemGroup>
+      <FileWrites Include="$(GeneratedConfigurationSchemaOutputPath)" Condition="Exists('$(GeneratedConfigurationSchemaOutputPath)')" />
+    </ItemGroup>
+  </Target>
+</Project>

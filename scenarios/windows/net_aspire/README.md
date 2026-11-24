@@ -52,6 +52,7 @@ build, not prep, clean, or restore:
 | `binlog` | `0` | Set to `1` to collect a separate MSBuild binary log for each build loop. |
 | `skip_playwright_browser_install` | `0` | Set to `1` to add `-p:InstallBrowsersForPlaywright=false`. Playwright packages and projects are still built. |
 | `max_cpu_count` | `0` | Set to a positive integer to add `-m:<value>`. `0` keeps the original default, not single-threaded execution. |
+| `direct_schema_exec` (Windows only) | `0` | Set to `1` to launch each configuration schema generator directly from MSBuild, without `cmd.exe`. Schema generation and validation still run. |
 
 Set the options in the corresponding profile section:
 
@@ -92,7 +93,12 @@ For DUTs already prepared with this SDK version, enabling an option refreshes on
 the run script; toggling the options does not require another prep version bump.
 
 Standalone Windows runs accept `-binlog`, `-skipPlaywrightBrowserInstall`, and
-`-maxCpuCount 12` on `net_aspire_run.ps1`. macOS runs accept `--binlog`,
+`-maxCpuCount 12` on `net_aspire_run.ps1`. For the Windows SchemaGenerator A/B,
+use `net_aspire:direct_schema_exec=0` (original) and `net_aspire:direct_schema_exec=1`
+(standalone: `-directSchemaExec`). The option imports an experiment target during
+the timed build only, without modifying the Aspire checkout or requiring re-prep.
+
+macOS runs accept `--binlog`,
 `--skip-playwright-browser-install`, and `--max-cpu-count 12` on
 `mac_net_aspire_run.sh`. Selected build arguments are recorded in the run log.
 
