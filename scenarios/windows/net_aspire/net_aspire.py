@@ -24,6 +24,8 @@ class NetAspire(core.app_scenario.Scenario):
     Params.setDefault(module, 'skip_playwright_browser_install', '0', desc="Skip Playwright browser installation during the timed build.", valOptions=['0', '1'])
     Params.setDefault(module, 'max_cpu_count', '0', desc="Maximum concurrent MSBuild processes (0 keeps the original default; experiment B: 12).")
     Params.setDefault(module, 'direct_schema_exec', '0', desc="Launch the Aspire SchemaGenerator directly without a command shell.", valOptions=['0', '1'])
+    Params.setDefault(module, 'schema_timing', '0', desc="Collect SchemaGenerator phase timings (requires direct_schema_exec=1 and binlog=0).", valOptions=['0', '1'])
+    Params.setDefault(module, 'schema_runtime', 'default', desc="SchemaGenerator runtime; 11 selects an installed .NET 11 runtime and requires direct_schema_exec=1.", valOptions=['default', '11'])
 
 
     def setUp(self):
@@ -33,6 +35,14 @@ class NetAspire(core.app_scenario.Scenario):
         self.binlog = Params.get(self.module, 'binlog') == '1'
         self.skip_playwright_browser_install = Params.get(self.module, 'skip_playwright_browser_install') == '1'
         self.direct_schema_exec = Params.get(self.module, 'direct_schema_exec') == '1'
+        self.schema_timing = Params.get(self.module, 'schema_timing') == '1'
+        self.schema_runtime = Params.get(self.module, 'schema_runtime')
+        if self.schema_runtime not in ('default', '11'):
+            raise ValueError("schema_runtime must be default or 11.")
+        if self.schema_runtime != 'default' and not self.direct_schema_exec:
+            raise ValueError("schema_runtime=11 requires direct_schema_exec=1.")
+        if self.schema_timing and (not self.direct_schema_exec or self.binlog):
+            raise ValueError("schema_timing requires direct_schema_exec=1 and binlog=0.")
         try:
             self.max_cpu_count = int(Params.get(self.module, 'max_cpu_count'))
         except (TypeError, ValueError):
@@ -63,6 +73,8 @@ class NetAspire(core.app_scenario.Scenario):
                 self._upload(f"{resources_dir}\\{self.module}_run.ps1", self.target, check_modified=False)
             if self.direct_schema_exec:
                 self._upload(f"{resources_dir}\\DirectSchemaExec.targets", self.target, check_modified=False)
+            if self.schema_timing or self.schema_runtime != 'default':
+                self._upload(f"{resources_dir}\\SchemaTiming.ps1", self.target, check_modified=False)
 
         # Call base class setUp() to dump config, call tool callbacks, and start measurment
         core.app_scenario.Scenario.setUp(self)
@@ -77,6 +89,10 @@ class NetAspire(core.app_scenario.Scenario):
             run_args += f" -maxCpuCount {self.max_cpu_count}"
         if self.direct_schema_exec:
             run_args += " -directSchemaExec"
+        if self.schema_timing:
+            run_args += " -schemaTiming"
+        if self.schema_runtime == '11':
+            run_args += " -schemaRuntime 11"
         for i in range(int(self.loops)):
             logging.info(f"Running loop {i + 1}")
             self._call(["pwsh", f"{self.target}\\{self.module}_run.ps1 -startTime {start_time}{run_args}"])

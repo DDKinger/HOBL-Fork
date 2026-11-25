@@ -53,6 +53,8 @@ build, not prep, clean, or restore:
 | `skip_playwright_browser_install` | `0` | Set to `1` to add `-p:InstallBrowsersForPlaywright=false`. Playwright packages and projects are still built. |
 | `max_cpu_count` | `0` | Set to a positive integer to add `-m:<value>`. `0` keeps the original default, not single-threaded execution. |
 | `direct_schema_exec` (Windows only) | `0` | Set to `1` to launch each configuration schema generator directly from MSBuild, without `cmd.exe`. Schema generation and validation still run. |
+| `schema_timing` (Windows only) | `0` | Set to `1` with `direct_schema_exec=1` and `binlog=0` to collect per-invocation diagnostics. Do not use this mode for performance scoring. |
+| `schema_runtime` (Windows only) | `default` | Set to `11` with `direct_schema_exec=1` to select the highest installed stable .NET 11 runtime for the generator subprocess only. |
 
 Set the options in the corresponding profile section:
 
@@ -97,6 +99,22 @@ Standalone Windows runs accept `-binlog`, `-skipPlaywrightBrowserInstall`, and
 use `net_aspire:direct_schema_exec=0` (original) and `net_aspire:direct_schema_exec=1`
 (standalone: `-directSchemaExec`). The option imports an experiment target during
 the timed build only, without modifying the Aspire checkout or requiring re-prep.
+
+For diagnostics, add `net_aspire:schema_timing=1` (standalone: `-schemaTiming`).
+Use no binlog or WPR CPU trace. Each loop exports `net_aspire_schema_timing_<timestamp>.csv`,
+with the response file, actual runtime, whether a schema was written, its SHA-256
+if written (computed after the timed build), and
+monotonic timestamps immediately before launching `dotnet`, at the start of
+the managed entry point, after Roslyn resolves the assembly symbol, and when
+the generator command returns. Divide timestamp differences by `tick_frequency`
+for seconds. The first interval includes process scheduling and startup; the
+last interval can still include lazy metadata work and output writes.
+
+For the runtime A/B, use `net_aspire:schema_runtime=default` and
+`net_aspire:schema_runtime=11` (standalone: `-schemaRuntime 11`) with otherwise
+identical options. For build performance measurements, use `schema_timing=0`
+and `binlog=0` in both arms: the runtime override does not need instrumentation.
+The build SDK and target frameworks do not change.
 
 macOS runs accept `--binlog`,
 `--skip-playwright-browser-install`, and `--max-cpu-count 12` on

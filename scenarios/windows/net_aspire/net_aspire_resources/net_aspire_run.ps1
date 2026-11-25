@@ -8,7 +8,10 @@ param(
     [switch]$skipPlaywrightBrowserInstall,
     [ValidateRange(0, 2147483647)]
     [int]$maxCpuCount = 0,
-    [switch]$directSchemaExec
+    [switch]$directSchemaExec,
+    [switch]$schemaTiming,
+    [ValidateSet("default", "11")]
+    [string]$schemaRuntime = "default"
 )
 
 # Require PowerShell > 7
@@ -160,6 +163,22 @@ if ($directSchemaExec) {
         Exit 1
     }
 }
+if ($schemaRuntime -ne "default" -and -not $directSchemaExec) {
+    " ERROR - Schema runtime override requires -directSchemaExec." | log
+    Exit 1
+}
+if ($schemaTiming -and (-not $directSchemaExec -or $binlog)) {
+    " ERROR - Schema timing requires -directSchemaExec and no -binlog." | log
+    Exit 1
+}
+if ($schemaTiming -or $schemaRuntime -ne "default") {
+    $schemaTimingScript = Join-Path $PSScriptRoot "SchemaTiming.ps1"
+    if (-not (Test-Path -LiteralPath $schemaTimingScript -PathType Leaf)) {
+        " ERROR - Schema timing script not found: $schemaTimingScript" | log
+        Exit 1
+    }
+    . $schemaTimingScript
+}
 
 # Increase Playwright browser download timeout (default is too short for slow CDN)
 $env:PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT = "300000"
@@ -200,20 +219,49 @@ if ($binlog) {
     "-- Binary logging enabled (adds build overhead): $binlogFile" | log
 }
 
-"-- Build command: dotnet $($buildArgs -join ' ')" | log
-"-- net_aspire build started" | log
-Write-RunPhaseMarker "phase.run_prep.end"
-Write-RunPhaseMarker "phase.run_build.start"
+$timingDirectory = $null
+$schemaRuntimeVersion = ""
+try {
+    if ($schemaRuntime -eq "11") {
+        $schemaRuntimeVersion = Get-SchemaRuntimeVersion -DotNetPath $dotnetCmd.Source -Major 11
+        "-- SchemaGenerator runtime override: $schemaRuntimeVersion" | log
+        $buildArgs += "-p:HoblSchemaRuntimeVersion=$schemaRuntimeVersion"
+    }
+    if ($schemaTiming) {
+        $timingStamp = Get-Date -Format 'yyyyMMdd_HHmmss_fffffff'
+        $timingFile = Join-Path "$scriptDrive\hobl_data" "net_aspire_schema_timing_$timingStamp.csv"
+        $timingDirectory = (New-Item -ItemType Directory -Path "$scriptDrive\hobl_bin\net_aspire_schema_timing_$timingStamp" -ErrorAction Stop).FullName
+        New-SchemaTimingSources -AspireDirectory $aspireDir -TimingDirectory $timingDirectory
+        $buildArgs += "-p:HoblSchemaTimingDirectory=$timingDirectory"
+    }
 
-$buildDuration = Measure-Command {
-    dotnet @buildArgs > "$logDir\net_aspire_build.log" 2>&1
+    "-- Build command: dotnet $($buildArgs -join ' ')" | log
+    "-- net_aspire build started" | log
+    Write-RunPhaseMarker "phase.run_prep.end"
+    Write-RunPhaseMarker "phase.run_build.start"
+
+    $buildDuration = Measure-Command {
+        dotnet @buildArgs > "$logDir\net_aspire_build.log" 2>&1
+    }
+    check($lastexitcode)
+
+    $buildTime = [math]::Round($buildDuration.TotalSeconds, 2)
+    "-- net_aspire build completed in ${buildTime}s" | log
+    Write-RunPhaseMarker "phase.run_build.end"
+    Write-RunPhaseMarker "phase.run_results.start"
+
+    if ($schemaTiming) {
+        Export-SchemaTimingSamples -TimingDirectory $timingDirectory -OutputPath $timingFile -ExpectedRuntimeVersion $schemaRuntimeVersion
+        "SchemaGenerator timing CSV saved to: $timingFile" | log
+    }
+} catch {
+    " ERROR - Net Aspire build or schema timing failed: $($_.Exception.Message)" | log
+    Exit 1
+} finally {
+    if ($timingDirectory -and (Test-Path -LiteralPath $timingDirectory -PathType Container)) {
+        Remove-Item -LiteralPath $timingDirectory -Recurse -ErrorAction Stop
+    }
 }
-check($lastexitcode)
-
-$buildTime = [math]::Round($buildDuration.TotalSeconds, 2)
-"-- net_aspire build completed in ${buildTime}s" | log
-Write-RunPhaseMarker "phase.run_build.end"
-Write-RunPhaseMarker "phase.run_results.start"
 
 # ============================================================================
 # Calculate scenario_runtime and save metrics
