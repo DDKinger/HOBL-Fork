@@ -8,7 +8,9 @@ param(
     [switch]$skipPlaywrightBrowserInstall,
     [ValidateRange(0, 2147483647)]
     [int]$maxCpuCount = 0,
-    [switch]$directSchemaExec
+    [switch]$directSchemaExec,
+    [ValidateSet("default", "x86", "x64")]
+    [string]$protobufToolsCpu = "default"
 )
 
 # Require PowerShell > 7
@@ -193,6 +195,9 @@ if ($maxCpuCount -gt 0) {
 }
 if ($directSchemaExec) {
     $buildArgs += "-p:CustomAfterDirectoryBuildTargets=$schemaTargets"
+}
+if ($protobufToolsCpu -ne "default") {
+    $buildArgs += "-p:Protobuf_ToolsCpu=$protobufToolsCpu"
 }
 if ($binlog) {
     $binlogFile = Join-Path "$scriptDrive\hobl_data" "net_aspire_build_$(Get-Date -Format 'yyyyMMdd_HHmmss_fffffff').binlog"

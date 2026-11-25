@@ -53,6 +53,7 @@ build, not prep, clean, or restore:
 | `skip_playwright_browser_install` | `0` | Set to `1` to add `-p:InstallBrowsersForPlaywright=false`. Playwright packages and projects are still built. |
 | `max_cpu_count` | `0` | Set to a positive integer to add `-m:<value>`. `0` keeps the original default, not single-threaded execution. |
 | `direct_schema_exec` (Windows only) | `0` | Set to `1` to launch each configuration schema generator directly from MSBuild, without `cmd.exe`. Schema generation and validation still run. |
+| `protobuf_tools_cpu` (Windows only) | `default` | Set to `x86` or `x64` to select both bundled protoc and gRPC plugin tools with `-p:Protobuf_ToolsCpu=<value>`. `default` keeps Grpc.Tools auto-selection. |
 
 Set the options in the corresponding profile section:
 
@@ -61,6 +62,7 @@ Set the options in the corresponding profile section:
 binlog=0
 skip_playwright_browser_install=0
 max_cpu_count=0
+protobuf_tools_cpu=default
 
 [mac_net_aspire]
 binlog=0
@@ -75,6 +77,9 @@ Alternatively, append the corresponding overrides to the HOBL command:
 net_aspire:skip_playwright_browser_install=1 net_aspire:max_cpu_count=0
 # Windows experiment B: original workload, only change parallelism
 net_aspire:skip_playwright_browser_install=0 net_aspire:max_cpu_count=12
+# Windows codegen A/B: append one of these to otherwise identical commands
+net_aspire:protobuf_tools_cpu=x86
+net_aspire:protobuf_tools_cpu=x64
 
 # macOS experiment A
 mac_net_aspire:skip_playwright_browser_install=1 mac_net_aspire:max_cpu_count=0
@@ -97,6 +102,16 @@ Standalone Windows runs accept `-binlog`, `-skipPlaywrightBrowserInstall`, and
 use `net_aspire:direct_schema_exec=0` (original) and `net_aspire:direct_schema_exec=1`
 (standalone: `-directSchemaExec`). The option imports an experiment target during
 the timed build only, without modifying the Aspire checkout or requiring re-prep.
+
+Standalone Windows codegen runs accept `-protobufToolsCpu x86` or
+`-protobufToolsCpu x64`. This switches tools from the current Grpc.Tools package,
+not the .NET SDK, and does not modify machine or user environment variables.
+An explicit protoc/plugin path override can take precedence over packaged tool
+selection. Before benchmarking, use `binlog=1` to confirm both actual tool paths
+contain `windows_x86` or `windows_x64`, respectively, and that generated outputs
+are equivalent. Keep the SDK, Grpc.Tools version, inputs, and other options fixed;
+use `binlog=0` for both groups when comparing build time without logging overhead.
+On Windows ARM64, both x86 and x64 tools are emulated, not native ARM64 tools.
 
 macOS runs accept `--binlog`,
 `--skip-playwright-browser-install`, and `--max-cpu-count 12` on

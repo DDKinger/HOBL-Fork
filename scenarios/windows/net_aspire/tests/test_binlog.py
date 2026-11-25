@@ -62,6 +62,7 @@ class BinlogConfigurationTests(ScenarioConfigurationTestCase):
         self.assertEqual(self.scenario._call.call_count, 2)
         for call in self.scenario._call.call_args_list:
             self.assertNotIn(self.binlog_switch, call.args[0][1])
+            self.assertNotIn('-protobufToolsCpu', call.args[0][1])
 
     def test_enabled_refreshes_prepared_dut_script_and_forwards_each_loop(self):
         self.values['binlog'] = '1'
@@ -130,6 +131,42 @@ class WindowsBuildExperimentConfigurationTests(ScenarioConfigurationTestCase):
                 self.scenario._call.assert_not_called()
 
 
+class ProtobufToolsCpuConfigurationTests(ScenarioConfigurationTestCase):
+    def test_explicit_architectures_refresh_prepared_dut_and_forward_each_loop(self):
+        for cpu in ('x86', 'x64'):
+            with self.subTest(cpu=cpu):
+                self.setUp()
+                self.values['protobuf_tools_cpu'] = cpu
+                self.scenario.setUp()
+                self.scenario._upload.assert_called_once_with(
+                    r'scenarios\windows\net_aspire\net_aspire_resources\net_aspire_run.ps1',
+                    self.scenario.target, check_modified=False)
+                self.scenario.createPrepStatusControlFile.assert_not_called()
+                self.scenario._call.assert_not_called()
+                self.scenario.runTest()
+                self.assertEqual(self.scenario._call.call_count, 2)
+                for call in self.scenario._call.call_args_list:
+                    self.assertTrue(call.args[0][1].endswith(f' -protobufToolsCpu {cpu}'))
+
+    def test_first_prep_uploads_resources_only_once(self):
+        self.values['protobuf_tools_cpu'] = 'x64'
+        self.scenario.checkPrepStatus.return_value = 'missing'
+        self.scenario.setUp()
+        self.scenario._upload.assert_called_once_with(
+            r'scenarios\windows\net_aspire\net_aspire_resources',
+            self.scenario.dut_exec_path)
+        self.scenario.createPrepStatusControlFile.assert_called_once()
+
+    def test_invalid_architecture_fails_before_upload_or_prep(self):
+        for cpu in ('arm64', 'auto', '', 'x64 -p:Other=true'):
+            with self.subTest(cpu=cpu):
+                self.values['protobuf_tools_cpu'] = cpu
+                with self.assertRaisesRegex(ValueError, 'protobuf_tools_cpu'):
+                    self.scenario.setUp()
+                self.scenario._upload.assert_not_called()
+                self.scenario._call.assert_not_called()
+
+
 class DirectSchemaConfigurationTests(ScenarioConfigurationTestCase):
     def test_enabled_on_prepared_dut_uploads_script_and_targets_and_forwards_opt_in(self):
         self.values['direct_schema_exec'] = '1'
@@ -167,7 +204,8 @@ class BinlogScriptTests(unittest.TestCase):
         self.wrapper = self.root / 'invoke-test.ps1'
         self.wrapper.write_text(r'''
 param([string]$RunScript, [string]$TestRoot, [switch]$Binlog, [int]$BuildExitCode,
-      [switch]$SkipPlaywrightBrowserInstall, [int]$MaxCpuCount = 0, [switch]$DirectSchemaExec)
+      [switch]$SkipPlaywrightBrowserInstall, [int]$MaxCpuCount = 0, [switch]$DirectSchemaExec,
+      [string]$ProtobufToolsCpu = 'default')
 $ErrorActionPreference = 'Stop'
 function Split-Path {
     param([string]$Path, [switch]$Qualifier, [switch]$Parent)
@@ -187,11 +225,12 @@ function dotnet {
         $global:LASTEXITCODE = $BuildExitCode
     }
 }
-& $RunScript -binlog:$Binlog -skipPlaywrightBrowserInstall:$SkipPlaywrightBrowserInstall -maxCpuCount $MaxCpuCount -directSchemaExec:$DirectSchemaExec
+& $RunScript -binlog:$Binlog -skipPlaywrightBrowserInstall:$SkipPlaywrightBrowserInstall -maxCpuCount $MaxCpuCount -directSchemaExec:$DirectSchemaExec -protobufToolsCpu $ProtobufToolsCpu
 exit $LASTEXITCODE
 ''', encoding='utf-8')
 
-    def run_script(self, enabled=False, build_exit_code=0, skip_playwright=False, max_cpu_count=0, direct_schema=False):
+    def run_script(self, enabled=False, build_exit_code=0, skip_playwright=False, max_cpu_count=0,
+                   direct_schema=False, protobuf_tools_cpu=None):
         command = [shutil.which('pwsh'), '-NoProfile', '-NonInteractive', '-File', str(self.wrapper),
                    '-RunScript', str(SCENARIO_DIR / 'net_aspire_resources' / 'net_aspire_run.ps1'),
                    '-TestRoot', str(self.root), '-BuildExitCode', str(build_exit_code)]
@@ -203,6 +242,8 @@ exit $LASTEXITCODE
             command.extend(['-MaxCpuCount', str(max_cpu_count)])
         if direct_schema:
             command.append('-DirectSchemaExec')
+        if protobuf_tools_cpu is not None:
+            command.extend(['-ProtobufToolsCpu', protobuf_tools_cpu])
         return subprocess.run(command, capture_output=True, text=True, timeout=60)
 
     def dotnet_calls(self):
@@ -279,6 +320,38 @@ exit $LASTEXITCODE
         for value in (-1, 'twelve', 2147483648):
             with self.subTest(value=value):
                 result = self.run_script(max_cpu_count=value)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertFalse((self.root / 'dotnet-calls.jsonl').exists())
+
+    def test_protobuf_cpu_changes_only_the_timed_build(self):
+        for cpu in ('default', 'x86', 'x64'):
+            with self.subTest(cpu=cpu):
+                result = self.run_script(protobuf_tools_cpu=cpu)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                build = ['build', 'Aspire.slnx', '--no-restore']
+                if cpu != 'default':
+                    build.append(f'-p:Protobuf_ToolsCpu={cpu}')
+                commands = [call for call in self.dotnet_calls() if call[0] in ('clean', 'restore', 'build')]
+                self.assertEqual(commands[-3:], [['clean', 'Aspire.slnx'], ['restore', 'Aspire.slnx'], build])
+
+    def test_protobuf_cpu_combines_with_existing_build_options(self):
+        result = self.run_script(enabled=True, skip_playwright=True, max_cpu_count=12,
+                                 direct_schema=True, protobuf_tools_cpu='x64')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        target = SCENARIO_DIR / 'net_aspire_resources' / 'DirectSchemaExec.targets'
+        build = self.dotnet_calls()[-1]
+        self.assertEqual(build[:7], [
+            'build', 'Aspire.slnx', '--no-restore', '-p:InstallBrowsersForPlaywright=false', '-m:12',
+            f'-p:CustomAfterDirectoryBuildTargets={target}', '-p:Protobuf_ToolsCpu=x64',
+        ])
+        self.assertEqual(len(build), 8)
+        self.assertTrue(build[7].startswith('-bl:'))
+        self.assertTrue(Path(build[7][4:]).is_file())
+
+    def test_invalid_protobuf_cpu_is_rejected_before_running_dotnet(self):
+        for cpu in ('arm64', 'auto', 'x64 -p:Other=true'):
+            with self.subTest(cpu=cpu):
+                result = self.run_script(protobuf_tools_cpu=cpu)
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertFalse((self.root / 'dotnet-calls.jsonl').exists())
 
