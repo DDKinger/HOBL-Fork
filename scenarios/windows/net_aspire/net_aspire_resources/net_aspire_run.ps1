@@ -163,15 +163,15 @@ if ($directSchemaExec) {
         Exit 1
     }
 }
-if ($schemaRuntime -ne "default" -and -not $schemaTiming) {
-    " ERROR - Schema runtime override requires -schemaTiming." | log
+if ($schemaRuntime -ne "default" -and -not $directSchemaExec) {
+    " ERROR - Schema runtime override requires -directSchemaExec." | log
     Exit 1
 }
-if ($schemaTiming) {
-    if (-not $directSchemaExec -or $binlog) {
-        " ERROR - Schema timing requires -directSchemaExec and no -binlog." | log
-        Exit 1
-    }
+if ($schemaTiming -and (-not $directSchemaExec -or $binlog)) {
+    " ERROR - Schema timing requires -directSchemaExec and no -binlog." | log
+    Exit 1
+}
+if ($schemaTiming -or $schemaRuntime -ne "default") {
     $schemaTimingScript = Join-Path $PSScriptRoot "SchemaTiming.ps1"
     if (-not (Test-Path -LiteralPath $schemaTimingScript -PathType Leaf)) {
         " ERROR - Schema timing script not found: $schemaTimingScript" | log
@@ -222,12 +222,12 @@ if ($binlog) {
 $timingDirectory = $null
 $schemaRuntimeVersion = ""
 try {
+    if ($schemaRuntime -eq "11") {
+        $schemaRuntimeVersion = Get-SchemaRuntimeVersion -DotNetPath $dotnetCmd.Source -Major 11
+        "-- SchemaGenerator runtime override: $schemaRuntimeVersion" | log
+        $buildArgs += "-p:HoblSchemaRuntimeVersion=$schemaRuntimeVersion"
+    }
     if ($schemaTiming) {
-        if ($schemaRuntime -eq "11") {
-            $schemaRuntimeVersion = Get-SchemaRuntimeVersion -DotNetPath $dotnetCmd.Source -Major 11
-            "-- SchemaGenerator runtime override: $schemaRuntimeVersion" | log
-            $buildArgs += "-p:HoblSchemaRuntimeVersion=$schemaRuntimeVersion"
-        }
         $timingStamp = Get-Date -Format 'yyyyMMdd_HHmmss_fffffff'
         $timingFile = Join-Path "$scriptDrive\hobl_data" "net_aspire_schema_timing_$timingStamp.csv"
         $timingDirectory = (New-Item -ItemType Directory -Path "$scriptDrive\hobl_bin\net_aspire_schema_timing_$timingStamp" -ErrorAction Stop).FullName

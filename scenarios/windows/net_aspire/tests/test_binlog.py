@@ -170,10 +170,20 @@ class DirectSchemaConfigurationTests(ScenarioConfigurationTestCase):
         for call in self.scenario._call.call_args_list:
             self.assertTrue(call.args[0][1].endswith(' -directSchemaExec -schemaTiming -schemaRuntime 11'))
 
-    def test_runtime_requires_diagnostics_and_a_supported_value(self):
-        for value in ('11', 'latest'):
-            with self.subTest(value=value):
-                self.values.update(direct_schema_exec='1', schema_runtime=value)
+    def test_runtime_override_without_timing_uploads_helper_and_forwards_only_runtime(self):
+        self.values.update(direct_schema_exec='1', schema_runtime='11')
+        self.scenario.setUp()
+        self.scenario._upload.assert_any_call(
+            r'scenarios\windows\net_aspire\net_aspire_resources\SchemaTiming.ps1',
+            self.scenario.target, check_modified=False)
+        self.scenario.runTest()
+        for call in self.scenario._call.call_args_list:
+            self.assertTrue(call.args[0][1].endswith(' -directSchemaExec -schemaRuntime 11'))
+
+    def test_runtime_requires_direct_exec_and_a_supported_value(self):
+        for direct, value in (('0', '11'), ('1', 'latest')):
+            with self.subTest(direct=direct, value=value):
+                self.values.update(direct_schema_exec=direct, schema_runtime=value)
                 with self.assertRaisesRegex(ValueError, 'schema_runtime'):
                     self.scenario.setUp()
                 self.scenario._upload.assert_not_called()
@@ -202,17 +212,26 @@ class BinlogScriptTests(unittest.TestCase):
         self.wrapper = self.root / 'invoke-test.ps1'
         self.wrapper.write_text(r'''
 param([string]$RunScript, [string]$TestRoot, [switch]$Binlog, [int]$BuildExitCode,
-      [switch]$SkipPlaywrightBrowserInstall, [int]$MaxCpuCount = 0, [switch]$DirectSchemaExec)
+      [switch]$SkipPlaywrightBrowserInstall, [int]$MaxCpuCount = 0, [switch]$DirectSchemaExec,
+      [string]$SchemaRuntime = "default")
 $ErrorActionPreference = 'Stop'
 function Split-Path {
     param([string]$Path, [switch]$Qualifier, [switch]$Parent)
     if ($Qualifier) { return $TestRoot }
     Microsoft.PowerShell.Management\Split-Path -Path $Path -Parent:$Parent
 }
+function Get-Command {
+    param([string]$Name)
+    if ($Name -eq "dotnet") { return [pscustomobject]@{ Source = "dotnet" } }
+    Microsoft.PowerShell.Core\Get-Command -Name $Name
+}
 function dotnet {
     ConvertTo-Json -InputObject @($args) -Compress |
         Add-Content -LiteralPath (Join-Path $TestRoot 'dotnet-calls.jsonl')
     $global:LASTEXITCODE = 0
+    if ($args[0] -eq '--list-runtimes') {
+        'Microsoft.NETCore.App 11.0.0 [mock]'
+    }
     if ($args[0] -eq 'build') {
         foreach ($arg in $args) {
             if ($arg.StartsWith('-bl:')) {
@@ -222,11 +241,12 @@ function dotnet {
         $global:LASTEXITCODE = $BuildExitCode
     }
 }
-& $RunScript -binlog:$Binlog -skipPlaywrightBrowserInstall:$SkipPlaywrightBrowserInstall -maxCpuCount $MaxCpuCount -directSchemaExec:$DirectSchemaExec
+& $RunScript -binlog:$Binlog -skipPlaywrightBrowserInstall:$SkipPlaywrightBrowserInstall -maxCpuCount $MaxCpuCount -directSchemaExec:$DirectSchemaExec -schemaRuntime $SchemaRuntime
 exit $LASTEXITCODE
 ''', encoding='utf-8')
 
-    def run_script(self, enabled=False, build_exit_code=0, skip_playwright=False, max_cpu_count=0, direct_schema=False):
+    def run_script(self, enabled=False, build_exit_code=0, skip_playwright=False, max_cpu_count=0,
+                   direct_schema=False, schema_runtime='default'):
         command = [shutil.which('pwsh'), '-NoProfile', '-NonInteractive', '-File', str(self.wrapper),
                    '-RunScript', str(SCENARIO_DIR / 'net_aspire_resources' / 'net_aspire_run.ps1'),
                    '-TestRoot', str(self.root), '-BuildExitCode', str(build_exit_code)]
@@ -238,6 +258,8 @@ exit $LASTEXITCODE
             command.extend(['-MaxCpuCount', str(max_cpu_count)])
         if direct_schema:
             command.append('-DirectSchemaExec')
+        if schema_runtime != 'default':
+            command.extend(['-SchemaRuntime', schema_runtime])
         return subprocess.run(command, capture_output=True, text=True, timeout=60)
 
     def dotnet_calls(self):
@@ -260,6 +282,19 @@ exit $LASTEXITCODE
             ['restore', 'Aspire.slnx'],
             ['build', 'Aspire.slnx', '--no-restore', f'-p:CustomAfterDirectoryBuildTargets={target}'],
         ])
+
+    def test_runtime_override_changes_only_build_and_does_not_collect_timings(self):
+        result = self.run_script(direct_schema=True, schema_runtime='11')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        target = SCENARIO_DIR / 'net_aspire_resources' / 'DirectSchemaExec.targets'
+        commands = [call for call in self.dotnet_calls() if call[0] in ('clean', 'restore', 'build')]
+        self.assertEqual(commands, [
+            ['clean', 'Aspire.slnx'],
+            ['restore', 'Aspire.slnx'],
+            ['build', 'Aspire.slnx', '--no-restore', f'-p:CustomAfterDirectoryBuildTargets={target}',
+             '-p:HoblSchemaRuntimeVersion=11.0.0'],
+        ])
+        self.assertEqual(list((self.root / 'hobl_data').glob('net_aspire_schema_timing_*.csv')), [])
 
     def test_enabled_builds_keep_separate_logs_in_results_directory(self):
         for _ in range(2):

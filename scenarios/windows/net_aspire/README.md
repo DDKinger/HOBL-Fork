@@ -54,7 +54,7 @@ build, not prep, clean, or restore:
 | `max_cpu_count` | `0` | Set to a positive integer to add `-m:<value>`. `0` keeps the original default, not single-threaded execution. |
 | `direct_schema_exec` (Windows only) | `0` | Set to `1` to launch each configuration schema generator directly from MSBuild, without `cmd.exe`. Schema generation and validation still run. |
 | `schema_timing` (Windows only) | `0` | Set to `1` with `direct_schema_exec=1` and `binlog=0` to collect per-invocation diagnostics. Do not use this mode for performance scoring. |
-| `schema_runtime` (Windows only) | `default` | Set to `11` with `schema_timing=1` to select the highest installed stable .NET 11 runtime for the generator subprocess only. |
+| `schema_runtime` (Windows only) | `default` | Set to `11` with `direct_schema_exec=1` to select the highest installed stable .NET 11 runtime for the generator subprocess only. |
 
 Set the options in the corresponding profile section:
 
@@ -112,7 +112,9 @@ last interval can still include lazy metadata work and output writes.
 
 For the runtime A/B, use `net_aspire:schema_runtime=default` and
 `net_aspire:schema_runtime=11` (standalone: `-schemaRuntime 11`) with otherwise
-identical options. The build SDK and target frameworks do not change.
+identical options. For build performance measurements, use `schema_timing=0`
+and `binlog=0` in both arms: the runtime override does not need instrumentation.
+The build SDK and target frameworks do not change.
 
 macOS runs accept `--binlog`,
 `--skip-playwright-browser-install`, and `--max-cpu-count 12` on
