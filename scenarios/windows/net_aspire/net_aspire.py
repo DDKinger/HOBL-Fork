@@ -24,7 +24,7 @@ class NetAspire(core.app_scenario.Scenario):
     Params.setDefault(module, 'skip_playwright_browser_install', '0', desc="Skip Playwright browser installation during the timed build.", valOptions=['0', '1'])
     Params.setDefault(module, 'max_cpu_count', '0', desc="Maximum concurrent MSBuild processes (0 keeps the original default; experiment B: 12).")
     Params.setDefault(module, 'direct_schema_exec', '0', desc="Launch the Aspire SchemaGenerator directly without a command shell.", valOptions=['0', '1'])
-    Params.setDefault(module, 'protobuf_tools_cpu', 'default', desc="Select the bundled protoc and gRPC plugin architecture (default keeps Grpc.Tools auto-selection).", valOptions=['default', 'x86', 'x64'])
+    Params.setDefault(module, 'protobuf_tools_cpu', 'default', desc="Select protoc and gRPC plugin tools: default uses Grpc.Tools auto-selection, x86/x64 use bundled tools, and arm64 uses separately staged native tools.", valOptions=['default', 'x86', 'x64', 'arm64'])
 
 
     def setUp(self):
@@ -35,8 +35,8 @@ class NetAspire(core.app_scenario.Scenario):
         self.skip_playwright_browser_install = Params.get(self.module, 'skip_playwright_browser_install') == '1'
         self.direct_schema_exec = Params.get(self.module, 'direct_schema_exec') == '1'
         self.protobuf_tools_cpu = Params.get(self.module, 'protobuf_tools_cpu')
-        if self.protobuf_tools_cpu not in ('default', 'x86', 'x64'):
-            raise ValueError("protobuf_tools_cpu must be default, x86, or x64.")
+        if self.protobuf_tools_cpu not in ('default', 'x86', 'x64', 'arm64'):
+            raise ValueError("protobuf_tools_cpu must be default, x86, x64, or arm64.")
         try:
             self.max_cpu_count = int(Params.get(self.module, 'max_cpu_count'))
         except (TypeError, ValueError):

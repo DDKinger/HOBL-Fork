@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -133,7 +134,7 @@ class WindowsBuildExperimentConfigurationTests(ScenarioConfigurationTestCase):
 
 class ProtobufToolsCpuConfigurationTests(ScenarioConfigurationTestCase):
     def test_explicit_architectures_refresh_prepared_dut_and_forward_each_loop(self):
-        for cpu in ('x86', 'x64'):
+        for cpu in ('x86', 'x64', 'arm64'):
             with self.subTest(cpu=cpu):
                 self.setUp()
                 self.values['protobuf_tools_cpu'] = cpu
@@ -158,7 +159,7 @@ class ProtobufToolsCpuConfigurationTests(ScenarioConfigurationTestCase):
         self.scenario.createPrepStatusControlFile.assert_called_once()
 
     def test_invalid_architecture_fails_before_upload_or_prep(self):
-        for cpu in ('arm64', 'auto', '', 'x64 -p:Other=true'):
+        for cpu in ('arm', 'auto', '', 'x64 -p:Other=true'):
             with self.subTest(cpu=cpu):
                 self.values['protobuf_tools_cpu'] = cpu
                 with self.assertRaisesRegex(ValueError, 'protobuf_tools_cpu'):
@@ -349,11 +350,54 @@ exit $LASTEXITCODE
         self.assertTrue(Path(build[7][4:]).is_file())
 
     def test_invalid_protobuf_cpu_is_rejected_before_running_dotnet(self):
-        for cpu in ('arm64', 'auto', 'x64 -p:Other=true'):
+        for cpu in ('arm', 'auto', 'x64 -p:Other=true'):
             with self.subTest(cpu=cpu):
                 result = self.run_script(protobuf_tools_cpu=cpu)
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertFalse((self.root / 'dotnet-calls.jsonl').exists())
+
+    def stage_codegen_tool(self, name, machine=0xAA64):
+        tool_dir = self.root / 'hobl_bin' / 'grpc-tools-arm64' / '2.72.0'
+        tool_dir.mkdir(parents=True, exist_ok=True)
+        header = bytearray(70)
+        struct.pack_into('<H', header, 0, 0x5A4D)
+        struct.pack_into('<I', header, 0x3C, 64)
+        struct.pack_into('<IH', header, 64, 0x00004550, machine)
+        tool = tool_dir / name
+        tool.write_bytes(header)
+        return tool
+
+    def test_native_protobuf_tools_are_used_only_for_the_timed_build(self):
+        protoc = self.stage_codegen_tool('protoc.exe')
+        plugin = self.stage_codegen_tool('grpc_csharp_plugin.exe')
+        result = self.run_script(protobuf_tools_cpu='arm64')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        commands = [call for call in self.dotnet_calls() if call[0] in ('clean', 'restore', 'build')]
+        self.assertEqual(commands, [
+            ['clean', 'Aspire.slnx'],
+            ['restore', 'Aspire.slnx'],
+            ['build', 'Aspire.slnx', '--no-restore', f'-p:Protobuf_ProtocFullPath={protoc}',
+             f'-p:gRPC_PluginFullPath={plugin}'],
+        ])
+        result = self.run_script(protobuf_tools_cpu='x86')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.dotnet_calls()[-1], [
+            'build', 'Aspire.slnx', '--no-restore', '-p:Protobuf_ToolsCpu=x86',
+        ])
+
+    def test_native_protobuf_rejects_missing_or_wrong_architecture_before_dotnet(self):
+        self.stage_codegen_tool('protoc.exe')
+        result = self.run_script(protobuf_tools_cpu='arm64')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('tool not found:', result.stdout)
+        self.assertIn('grpc_csharp_plugin.exe', result.stdout)
+        self.assertFalse((self.root / 'dotnet-calls.jsonl').exists())
+
+        self.stage_codegen_tool('grpc_csharp_plugin.exe', machine=0x8664)
+        result = self.run_script(protobuf_tools_cpu='arm64')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Expected a native Windows ARM64 executable', result.stdout)
+        self.assertFalse((self.root / 'dotnet-calls.jsonl').exists())
 
 
 @unittest.skipUnless(SHELL, 'Requires zsh or bash')

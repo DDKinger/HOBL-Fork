@@ -9,7 +9,7 @@ param(
     [ValidateRange(0, 2147483647)]
     [int]$maxCpuCount = 0,
     [switch]$directSchemaExec,
-    [ValidateSet("default", "x86", "x64")]
+    [ValidateSet("default", "x86", "x64", "arm64")]
     [string]$protobufToolsCpu = "default"
 )
 
@@ -108,8 +108,51 @@ function check {
     }
 }
 
+function Test-Arm64Executable {
+    param([string]$Path)
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $reader = [System.IO.BinaryReader]::new($stream)
+        if ($stream.Length -lt 64 -or $reader.ReadUInt16() -ne 0x5A4D) {
+            return $false
+        }
+        $stream.Position = 0x3C
+        $peOffset = $reader.ReadUInt32()
+        if ($peOffset -lt 64 -or $peOffset -gt ($stream.Length - 6)) {
+            return $false
+        }
+        $stream.Position = $peOffset
+        return ($reader.ReadUInt32() -eq 0x00004550 -and $reader.ReadUInt16() -eq 0xAA64)
+    } finally {
+        $stream.Dispose()
+    }
+}
+
 "-- net_aspire run started" | log
 Write-RunPhaseMarker "phase.run_prep.start"
+
+if ($protobufToolsCpu -eq "arm64") {
+    $arm64ToolsDir = "$scriptDrive\hobl_bin\grpc-tools-arm64\2.72.0"
+    $arm64Protoc = Join-Path $arm64ToolsDir "protoc.exe"
+    $arm64GrpcPlugin = Join-Path $arm64ToolsDir "grpc_csharp_plugin.exe"
+    foreach ($toolPath in @($arm64Protoc, $arm64GrpcPlugin)) {
+        if (-not (Test-Path -LiteralPath $toolPath -PathType Leaf)) {
+            " ERROR - Native Grpc.Tools 2.72.0 tool not found: $toolPath. Extract the Windows ARM64 codegen bundle to $arm64ToolsDir." | log
+            Exit 1
+        }
+        try {
+            $isArm64Tool = Test-Arm64Executable $toolPath
+        } catch {
+            " ERROR - Could not read native Grpc.Tools executable: $toolPath. $($_.Exception.Message)" | log
+            Exit 1
+        }
+        if (-not $isArm64Tool) {
+            " ERROR - Expected a native Windows ARM64 executable at $toolPath." | log
+            Exit 1
+        }
+    }
+}
 
 # Change to aspire directory
 if (-not (Test-Path $aspireDir)) {
@@ -196,7 +239,10 @@ if ($maxCpuCount -gt 0) {
 if ($directSchemaExec) {
     $buildArgs += "-p:CustomAfterDirectoryBuildTargets=$schemaTargets"
 }
-if ($protobufToolsCpu -ne "default") {
+if ($protobufToolsCpu -eq "arm64") {
+    $buildArgs += "-p:Protobuf_ProtocFullPath=$arm64Protoc"
+    $buildArgs += "-p:gRPC_PluginFullPath=$arm64GrpcPlugin"
+} elseif ($protobufToolsCpu -ne "default") {
     $buildArgs += "-p:Protobuf_ToolsCpu=$protobufToolsCpu"
 }
 if ($binlog) {
